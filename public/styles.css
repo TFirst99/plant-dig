@@ -6,9 +6,31 @@ body {
     align-items: center;
     height: 100vh;
     background-color: #f0f0f0;
+    font-family: Arial, sans-serif;
     overflow: hidden;
+}
+
+#game-container {
+    position: relative;
 }
 
 #gameCanvas {
     border: 1px solid #000;
+}
+
+#ui-overlay {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    background-color: rgba(255, 255, 255, 0.7);
+    padding: 10px;
+    border-radius: 5px;
+}
+
+#player-info, #controls-info {
+    margin-bottom: 10px;
+}
+
+#player-info p, #controls-info p {
+    margin: 5px 0;
 }

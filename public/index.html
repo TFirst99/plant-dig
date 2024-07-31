@@ -7,7 +7,21 @@
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-    <canvas id="gameCanvas"></canvas>
+    <div id="game-container">
+        <canvas id="gameCanvas"></canvas>
+        <div id="ui-overlay">
+            <div id="player-info">
+                <p>Faction: <span id="faction"></span></p>
+                <p>Position: (<span id="player-x"></span>, <span id="player-y"></span>)</p>
+            </div>
+            <div id="controls-info">
+                <p>Move: Arrow Keys</p>
+                <p>Dig/Fill: Space</p>
+                <p>Plant (Restorer): P</p>
+                <p>Chop (Digger): C</p>
+            </div>
+        </div>
+    </div>
     <script src="/socket.io/socket.io.js"></script>
     <script src="game.js"></script>
 </body>

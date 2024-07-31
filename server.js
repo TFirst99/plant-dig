@@ -18,12 +18,16 @@ app.get('/', (req, res) => {
 // Game constants
 const CHUNK_SIZE = 16;
 const VISIBLE_CHUNKS = 3;
-const WORLD_SIZE = 50; // Assuming a 1000x1000 world
+const WORLD_SIZE = 50;
+const MAX_SOIL_LEVEL = 10;
+const INITIAL_SOIL_LEVEL = 5;
+const TICK_RATE = 1000; // 1 tick per second
 
 // Game state
 const gameState = {
   players: {},
-  chunks: {}
+  chunks: {},
+  pendingActions: {}
 };
 
 function getChunkKey(chunkX, chunkY) {
@@ -36,8 +40,8 @@ function createChunk(chunkX, chunkY) {
     chunk[y] = [];
     for (let x = 0; x < CHUNK_SIZE; x++) {
       chunk[y][x] = {
-        soilLevel: Math.floor(Math.random() * 10),
-        hasTree: Math.random() < 0.1
+        soilLevel: INITIAL_SOIL_LEVEL,
+        hasTree: false
       };
     }
   }
@@ -50,6 +54,24 @@ function getOrCreateChunk(chunkX, chunkY) {
     gameState.chunks[key] = createChunk(chunkX, chunkY);
   }
   return gameState.chunks[key];
+}
+
+function getVisibleChunks(player) {
+  const visibleChunks = {};
+  const chunkRadius = Math.floor(VISIBLE_CHUNKS / 2);
+  const playerChunkX = Math.floor(player.x / CHUNK_SIZE);
+  const playerChunkY = Math.floor(player.y / CHUNK_SIZE);
+
+  for (let dy = -chunkRadius; dy <= chunkRadius; dy++) {
+    for (let dx = -chunkRadius; dx <= chunkRadius; dx++) {
+      const chunkX = playerChunkX + dx;
+      const chunkY = playerChunkY + dy;
+      const key = getChunkKey(chunkX, chunkY);
+      visibleChunks[key] = getOrCreateChunk(chunkX, chunkY);
+    }
+  }
+
+  return visibleChunks;
 }
 
 function getVisiblePlayers(currentPlayer) {
@@ -72,10 +94,49 @@ function getVisiblePlayers(currentPlayer) {
   return visiblePlayers;
 }
 
+function performAction(player, action) {
+  const chunkX = Math.floor(player.x / CHUNK_SIZE);
+  const chunkY = Math.floor(player.y / CHUNK_SIZE);
+  const chunk = getOrCreateChunk(chunkX, chunkY);
+  const tileX = player.x % CHUNK_SIZE;
+  const tileY = player.y % CHUNK_SIZE;
+  const tile = chunk[tileY][tileX];
+
+  switch (action) {
+    case 'dig':
+      if (player.faction === 'digger' && tile.soilLevel > 0) {
+        tile.soilLevel--;
+        if (tile.soilLevel < MAX_SOIL_LEVEL && tile.hasTree) {
+          tile.hasTree = false;
+        }
+        return true;
+      }
+      break;
+    case 'fill':
+      if (player.faction === 'restorer' && tile.soilLevel < MAX_SOIL_LEVEL) {
+        tile.soilLevel++;
+        return true;
+      }
+      break;
+    case 'plant':
+      if (player.faction === 'restorer' && tile.soilLevel === MAX_SOIL_LEVEL && !tile.hasTree) {
+        tile.hasTree = true;
+        return true;
+      }
+      break;
+    case 'chop':
+      if (player.faction === 'digger' && tile.hasTree) {
+        tile.hasTree = false;
+        return true;
+      }
+      break;
+  }
+  return false;
+}
+
 io.on('connection', (socket) => {
   console.log('New player connected:', socket.id);
   
-  // Add new player to game state
   gameState.players[socket.id] = {
     id: socket.id,
     x: Math.floor(Math.random() * WORLD_SIZE),
@@ -83,70 +144,80 @@ io.on('connection', (socket) => {
     faction: Math.random() < 0.5 ? 'digger' : 'restorer'
   };
 
-  // Send initial game state to the new player
-  const player = gameState.players[socket.id];
   socket.emit('initGameState', {
-    player: player,
+    player: gameState.players[socket.id],
     chunkSize: CHUNK_SIZE,
-    visibleChunks: VISIBLE_CHUNKS
+    visibleChunks: VISIBLE_CHUNKS,
+    maxSoilLevel: MAX_SOIL_LEVEL
   });
 
-  // Handle player disconnect
   socket.on('disconnect', () => {
     console.log('Player disconnected:', socket.id);
     delete gameState.players[socket.id];
+    delete gameState.pendingActions[socket.id];
   });
 
-  // Handle player input
   socket.on('playerInput', (input) => {
-    gameState.players[socket.id].input = input;
+    if (!gameState.pendingActions[socket.id]) {
+      gameState.pendingActions[socket.id] = input;
+    }
   });
 });
 
-// Game tick system
-const tickRate = 1000; // 1 tick per second
+function processPlayerActions() {
+  Object.entries(gameState.pendingActions).forEach(([playerId, action]) => {
+    const player = gameState.players[playerId];
+    if (!player) return;
 
-function gameTick() {
-  // Process player inputs
-  Object.values(gameState.players).forEach((player) => {
-    if (player.input) {
-      // Process the input (movement, digging, planting, etc.)
-      switch (player.input) {
+    if (action.type === 'move') {
+      let newX = player.x;
+      let newY = player.y;
+
+      switch (action.direction) {
         case 'up':
-          if (player.y > 0) player.y--;
+          if (player.y > 0) newY--;
           break;
         case 'down':
-          if (player.y < WORLD_SIZE - 1) player.y++;
+          if (player.y < WORLD_SIZE - 1) newY++;
           break;
         case 'left':
-          if (player.x > 0) player.x--;
+          if (player.x > 0) newX--;
           break;
         case 'right':
-          if (player.x < WORLD_SIZE - 1) player.x++;
+          if (player.x < WORLD_SIZE - 1) newX++;
           break;
       }
-      // Clear the processed input
-      player.input = null;
+
+      if (newX !== player.x || newY !== player.y) {
+        player.x = newX;
+        player.y = newY;
+      }
+    } else if (action.type === 'action') {
+      performAction(player, action.action);
     }
+
+    delete gameState.pendingActions[playerId];
   });
+}
+
+function gameTick() {
+  processPlayerActions();
 
   // Send updates to all players
   Object.values(gameState.players).forEach((player) => {
-    io.to(player.id).emit('gameStateUpdate', {
-      player: player,
-      visiblePlayers: getVisiblePlayers(player)
+    io.emit('gameStateUpdate', {
+      players: gameState.players,
+      chunks: gameState.chunks
     });
   });
 
-  // Print all player locations
   console.log("Player Locations:");
   Object.entries(gameState.players).forEach(([playerId, player]) => {
     console.log(`Player ${playerId}: (${player.x}, ${player.y})`);
   });
 }
 
-// Start the game tick
-setInterval(gameTick, tickRate);
+setInterval(gameTick, TICK_RATE);
 
 server.listen(port, () => {
   console.log(`Game server running at http://localhost:${port}`);
