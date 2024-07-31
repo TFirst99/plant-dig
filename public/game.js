@@ -3,48 +3,76 @@ const socket = io();
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
 
-const tileSize = 30;
-const gridWidth = 30;
-const gridHeight = 30;
+let player = null;
+let visiblePlayers = {};
+let chunkSize = 16;
+let visibleChunks = 3;
 
-canvas.width = tileSize * gridWidth;
-canvas.height = tileSize * gridHeight;
+function resizeCanvas() {
+  const maxSize = Math.min(window.innerWidth, window.innerHeight);
+  canvas.width = maxSize;
+  canvas.height = maxSize;
+}
 
-let gameState = null;
+resizeCanvas();
+window.addEventListener('resize', resizeCanvas);
 
-socket.on('gameState', (newState) => {
-  gameState = newState;
+socket.on('initGameState', (initState) => {
+  player = initState.player;
+  chunkSize = initState.chunkSize;
+  visibleChunks = initState.visibleChunks;
+});
+
+socket.on('gameStateUpdate', (newState) => {
+  player = newState.player;
+  visiblePlayers = newState.visiblePlayers;
 });
 
 function drawGrid() {
-  ctx.strokeStyle = '#ccc';
-  for (let x = 0; x <= gridWidth; x++) {
+  const tileSize = canvas.width / (chunkSize * visibleChunks);
+  ctx.strokeStyle = 'rgba(0, 0, 0, 0.1)';
+  
+  for (let i = 0; i <= chunkSize * visibleChunks; i++) {
+    const pos = i * tileSize;
     ctx.beginPath();
-    ctx.moveTo(x * tileSize, 0);
-    ctx.lineTo(x * tileSize, canvas.height);
+    ctx.moveTo(pos, 0);
+    ctx.lineTo(pos, canvas.height);
     ctx.stroke();
-  }
-  for (let y = 0; y <= gridHeight; y++) {
     ctx.beginPath();
-    ctx.moveTo(0, y * tileSize);
-    ctx.lineTo(canvas.width, y * tileSize);
+    ctx.moveTo(0, pos);
+    ctx.lineTo(canvas.width, pos);
     ctx.stroke();
   }
 }
 
 function drawPlayers() {
-  if (!gameState) return;
-  
-  Object.values(gameState.players).forEach((player) => {
-    ctx.fillStyle = player.faction === 'digger' ? 'blue' : 'green';
-    ctx.fillRect(player.x * tileSize, player.y * tileSize, tileSize, tileSize);
+  const tileSize = canvas.width / (chunkSize * visibleChunks);
+  const centerX = Math.floor(canvas.width / 2 / tileSize) * tileSize;
+  const centerY = Math.floor(canvas.height / 2 / tileSize) * tileSize;
+
+  // Draw the current player
+  ctx.fillStyle = player.faction === 'digger' ? 'blue' : 'green';
+  ctx.fillRect(centerX, centerY, tileSize, tileSize);
+
+  // Draw other visible players
+  Object.values(visiblePlayers).forEach(otherPlayer => {
+    const relativeX = otherPlayer.x - player.x;
+    const relativeY = otherPlayer.y - player.y;
+    const screenX = centerX + relativeX * tileSize;
+    const screenY = centerY + relativeY * tileSize;
+
+    ctx.fillStyle = otherPlayer.faction === 'digger' ? 'red' : 'yellow';
+    ctx.fillRect(screenX, screenY, tileSize, tileSize);
   });
 }
 
+
 function update() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  drawGrid();
-  drawPlayers();
+  if (player) {
+    drawGrid();
+    drawPlayers();
+  }
   requestAnimationFrame(update);
 }
 

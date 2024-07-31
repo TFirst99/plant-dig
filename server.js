@@ -16,9 +16,9 @@ app.get('/', (req, res) => {
 });
 
 // Game constants
-const CHUNK_SIZE = 32;
+const CHUNK_SIZE = 16;
 const VISIBLE_CHUNKS = 3;
-const VISIBLE_AREA = CHUNK_SIZE * VISIBLE_CHUNKS;
+const WORLD_SIZE = 50; // Assuming a 1000x1000 world
 
 // Game state
 const gameState = {
@@ -52,21 +52,24 @@ function getOrCreateChunk(chunkX, chunkY) {
   return gameState.chunks[key];
 }
 
-function getRelevantChunks(playerX, playerY) {
-  const centerChunkX = Math.floor(playerX / CHUNK_SIZE);
-  const centerChunkY = Math.floor(playerY / CHUNK_SIZE);
-  const relevantChunks = {};
+function getVisiblePlayers(currentPlayer) {
+  const visiblePlayers = {};
+  const chunkRadius = Math.floor(VISIBLE_CHUNKS / 2);
+  const playerChunkX = Math.floor(currentPlayer.x / CHUNK_SIZE);
+  const playerChunkY = Math.floor(currentPlayer.y / CHUNK_SIZE);
 
-  for (let dy = -1; dy <= 1; dy++) {
-    for (let dx = -1; dx <= 1; dx++) {
-      const chunkX = centerChunkX + dx;
-      const chunkY = centerChunkY + dy;
-      const key = getChunkKey(chunkX, chunkY);
-      relevantChunks[key] = getOrCreateChunk(chunkX, chunkY);
+  Object.entries(gameState.players).forEach(([id, player]) => {
+    if (id !== currentPlayer.id) {
+      const otherChunkX = Math.floor(player.x / CHUNK_SIZE);
+      const otherChunkY = Math.floor(player.y / CHUNK_SIZE);
+      if (Math.abs(otherChunkX - playerChunkX) <= chunkRadius &&
+          Math.abs(otherChunkY - playerChunkY) <= chunkRadius) {
+        visiblePlayers[id] = player;
+      }
     }
-  }
+  });
 
-  return relevantChunks;
+  return visiblePlayers;
 }
 
 io.on('connection', (socket) => {
@@ -74,8 +77,9 @@ io.on('connection', (socket) => {
   
   // Add new player to game state
   gameState.players[socket.id] = {
-    x: Math.floor(Math.random() * VISIBLE_AREA),
-    y: Math.floor(Math.random() * VISIBLE_AREA),
+    id: socket.id,
+    x: Math.floor(Math.random() * WORLD_SIZE),
+    y: Math.floor(Math.random() * WORLD_SIZE),
     faction: Math.random() < 0.5 ? 'digger' : 'restorer'
   };
 
@@ -83,7 +87,6 @@ io.on('connection', (socket) => {
   const player = gameState.players[socket.id];
   socket.emit('initGameState', {
     player: player,
-    chunks: getRelevantChunks(player.x, player.y),
     chunkSize: CHUNK_SIZE,
     visibleChunks: VISIBLE_CHUNKS
   });
@@ -104,8 +107,8 @@ io.on('connection', (socket) => {
 const tickRate = 1000; // 1 tick per second
 
 function gameTick() {
-  Object.keys(gameState.players).forEach((playerId) => {
-    const player = gameState.players[playerId];
+  // Process player inputs
+  Object.values(gameState.players).forEach((player) => {
     if (player.input) {
       // Process the input (movement, digging, planting, etc.)
       switch (player.input) {
@@ -113,24 +116,32 @@ function gameTick() {
           if (player.y > 0) player.y--;
           break;
         case 'down':
-          if (player.y < VISIBLE_AREA - 1) player.y++;
+          if (player.y < WORLD_SIZE - 1) player.y++;
           break;
         case 'left':
           if (player.x > 0) player.x--;
           break;
         case 'right':
-          if (player.x < VISIBLE_AREA - 1) player.x++;
+          if (player.x < WORLD_SIZE - 1) player.x++;
           break;
       }
       // Clear the processed input
       player.input = null;
-
-      // Send updated game state to the player
-      io.to(playerId).emit('gameStateUpdate', {
-        player: player,
-        chunks: getRelevantChunks(player.x, player.y)
-      });
     }
+  });
+
+  // Send updates to all players
+  Object.values(gameState.players).forEach((player) => {
+    io.to(player.id).emit('gameStateUpdate', {
+      player: player,
+      visiblePlayers: getVisiblePlayers(player)
+    });
+  });
+
+  // Print all player locations
+  console.log("Player Locations:");
+  Object.entries(gameState.players).forEach(([playerId, player]) => {
+    console.log(`Player ${playerId}: (${player.x}, ${player.y})`);
   });
 }
 
